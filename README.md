@@ -52,8 +52,8 @@ Backend variables:
 
 | Variable                     | Purpose                                                                |
 | ---------------------------- | ---------------------------------------------------------------------- |
-| `DATABASE_URL`               | PostgreSQL connection used by the API and Prisma migrations.           |
-| `DIRECT_URL`                 | Direct Neon URL used only by the production migration command.         |
+| `DATABASE_URL`               | PostgreSQL connection read by Prisma and the running API.              |
+| `DIRECT_URL`                 | Direct Neon URL explicitly mapped to `DATABASE_URL` for migrations.    |
 | `JWT_SECRET`                 | JWT signing secret; must contain at least 32 characters.               |
 | `PORT`                       | API port; defaults to `5000`.                                          |
 | `NODE_ENV`                   | `development`, `test`, or `production`.                                |
@@ -168,56 +168,76 @@ The guarded runner requires `TEST_DATABASE_URL`, requires a database name with a
 `testing`, or `ci` token, and refuses a physical database target matching `DATABASE_URL`, `DIRECT_URL`,
 or another configured database URL even when credentials or connection options differ. It runs only
 Prisma `migrate deploy` (all pending committed migrations; never reset) before the focused suite. Tests
-delete only records whose generated IDs they tracked during that run. These PostgreSQL tests have **not yet been executed
-successfully against a positively verified isolated test database in this environment**, so
-database-level concurrency remains unverified here. The normal `npm test` command explicitly
-excludes the PostgreSQL suite; it can run only through the guarded command above.
+delete only records whose generated IDs they tracked during that run. The suite has been exercised
+against an isolated Neon test database, but it remains opt-in and must be rerun after relevant
+database changes. The normal `npm test` command explicitly excludes the PostgreSQL suite; it can run
+only through the guarded command above.
 
 ## Production deployment: Vercel, Render, and Neon
 
 The intended topology is a Vercel frontend calling a Render web service backed by Neon PostgreSQL.
-`frontend/vercel.json` sends SPA deep links to `index.html`; static files remain available through
-Vercel's filesystem handling. No deployment has been performed from this repository.
+`frontend/vercel.json` sends SPA deep links to `index.html`. The root `render.yaml` describes the
+backend without embedding secrets. Importing that Blueprint or creating the services in provider
+dashboards remains a manual action; no deployment has been performed from this repository.
 
 ### 1. Create the Neon database
 
 1. Create a dedicated production project/database and keep it separate from development and test
    databases.
-2. Copy Neon's pooled connection string into Render as `DATABASE_URL`. Keep TLS parameters supplied
-   by Neon and use the pooler hostname for the long-running API.
-3. Copy Neon's direct connection string into Render as `DIRECT_URL`. It is used only for migration
-   deployment. Do not expose either URL to Vercel or commit it.
-4. Before the first API deployment, review the target and run the committed migrations through the
-   Render pre-deploy command below. Never use `prisma migrate dev` or a reset command in production.
+2. Copy Neon's pooled connection string into Render as `DATABASE_URL`. Preserve the TLS parameters
+   supplied by Neon and use the pooler hostname for the long-running API.
+3. Copy Neon's direct/unpooled connection string into Render as `DIRECT_URL`. The current Prisma
+   datasource does not declare `directUrl`; the documented migration command explicitly maps this
+   value to `DATABASE_URL`. Do not expose either URL to Vercel or commit it.
+4. Before the first API deployment, positively verify the Neon project and database named by
+   `DIRECT_URL`: it must be the dedicated production database, must not contain a `test`, `testing`,
+   or `ci` name token, and must not equal any development or test target. Then apply only the
+   committed migrations as described below. Never use `prisma migrate dev` or a reset command in
+   production.
 
 ### 2. Configure the Render backend
 
-Create a **Web Service** from the repository with these dashboard settings:
+Either import the root `render.yaml` as a Render Blueprint or create a **Web Service** from the
+repository with these equivalent dashboard settings:
 
 - Runtime: Node
-- Root directory: leave blank (repository root)
+- Root directory: leave blank (repository root; the workspace lockfile is here)
 - Build command: `npm ci && npm run build --workspace backend`
-- Pre-deploy command: `DATABASE_URL=$DIRECT_URL npm run prisma:migrate --workspace backend`
 - Start command: `npm start --workspace backend`
 - Health check path: `/api/v1/readiness`
 - Node version: 22, enforced by the root `package.json`
 
-Set these Render environment variables: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `NODE_ENV`,
-`CORS_ORIGIN`, `AUTH_COOKIE_NAME`, `TRUST_PROXY_HOPS`, `JWT_EXPIRES_IN`,
-`JWT_REMEMBER_EXPIRES_IN`, `AUTH_RATE_LIMIT_WINDOW_MS`, `AUTH_RATE_LIMIT_MAX`, and
-`ADMIN_LOGIN_RATE_LIMIT_MAX`. Set `NODE_ENV=production`, set `CORS_ORIGIN` to the exact HTTPS Vercel
-production origin without a trailing slash, and set `TRUST_PROXY_HOPS=1` for Render's single public
-proxy hop. Do not set `PORT`; Render supplies it.
+Required Render runtime variables are `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGIN`, and
+`AUTH_COOKIE_NAME`; the first two are secrets. `DIRECT_URL` is a deployment-only secret used for
+migrations and is not read by the running application. Runtime/configuration variables are `NODE_ENV`, `TRUST_PROXY_HOPS`,
+`JWT_EXPIRES_IN`, `JWT_REMEMBER_EXPIRES_IN`, `AUTH_RATE_LIMIT_WINDOW_MS`, `AUTH_RATE_LIMIT_MAX`, and
+`ADMIN_LOGIN_RATE_LIMIT_MAX`. The Blueprint supplies safe non-secret defaults for the latter group
+except `AUTH_COOKIE_NAME`, which must be chosen deliberately and then kept stable. Set
+`NODE_ENV=production`, set `CORS_ORIGIN` to the exact HTTPS Vercel production origin without a
+trailing slash, and use `TRUST_PROXY_HOPS=1` behind Render's proxy. Do not set `PORT`; Render supplies
+it and the server binds it on `0.0.0.0`.
 
 Use `/api/v1/readiness` as the Render health check so a new instance receives traffic only after it
 can reach PostgreSQL. Keep `/api/v1/health` for lightweight external liveness monitoring. A readiness
-failure returns a generic `503` without connection details. Render pre-deploy commands require a
-paid service; on a plan without that feature, run the same migration command from a trusted local or
-CI environment before deployment, with `DATABASE_URL` set temporarily to the direct Neon URL.
+failure returns a generic `503` without connection details.
 
-If initial catalogue/admin data is required, add `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`
-temporarily and run `npm run prisma:seed --workspace backend` in an authorized Render shell. Remove
-the seed variables afterward. Re-running the seed does not reset or reactivate an administrator.
+The Blueprint deliberately omits `preDeployCommand` so it is compatible with Render's free plan.
+Before the first deployment—and before later deployments that add migrations—verify `DIRECT_URL` as
+described above, then run this from a trusted Linux/macOS shell or CI job:
+
+```bash
+DATABASE_URL="$DIRECT_URL" npm run prisma:migrate --workspace backend
+```
+
+This command does not read `TEST_DATABASE_URL`. Stop if `DIRECT_URL` is unset or its decoded database
+name is not the expected production database. On a paid Render service, the same command may be
+configured as a pre-deploy command only after completing those checks; Render pre-deploy commands
+are a paid-service feature.
+
+`SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` are not runtime variables. If initial catalogue/admin
+data is required, add them temporarily and run `npm run prisma:seed --workspace backend` in an
+authorized Render shell. Remove the seed variables afterward. Re-running the seed does not reset or
+reactivate an administrator.
 
 ### 3. Configure the Vercel frontend
 
@@ -234,6 +254,9 @@ Set `VITE_API_URL` for Production (and Preview only when the preview origin is a
 backend) to the Render HTTPS API URL including `/api/v1`. Vite embeds this value at build time, so
 redeploy the frontend after changing it. Do not add database or JWT secrets to Vercel.
 
+Vercel needs only `VITE_API_URL`. Render/Neon credentials, JWT settings, seed credentials, and
+`TEST_DATABASE_URL` must never be configured in the Vercel project.
+
 The backend currently accepts exactly one `CORS_ORIGIN`. Production authentication therefore works
 for the configured Vercel production origin; arbitrary Vercel preview origins will not authenticate
 unless the origin policy is deliberately expanded in a future change. Both sites must use HTTPS.
@@ -247,6 +270,12 @@ session restoration even with correctly configured `SameSite=None; Secure` cooki
 Connect the GitHub repository separately in Vercel and Render. Protect the production branch and
 require the local/CI quality commands below before merging. In both dashboards, verify that secrets
 are environment-scoped and are not exposed to pull-request previews.
+
+Dashboard-only actions still required are: authorize both providers to access the GitHub repository,
+select branch `main`, enter secret values, choose service plans and regions, run verified production
+migrations from a trusted environment (or optionally configure the command on a paid Render plan),
+and assign custom domains/DNS. After adding domains, update both `CORS_ORIGIN` and `VITE_API_URL` and
+redeploy both services.
 
 After both services deploy, manually check:
 
@@ -263,7 +292,7 @@ After both services deploy, manually check:
 - Authentication rate limits are in-memory and per process.
 - Customer order history is not paginated.
 - The readiness endpoint requires PostgreSQL, but liveness does not.
-- PostgreSQL concurrency tests are prepared but remain unexecuted in this environment.
+- PostgreSQL concurrency tests are opt-in and require an explicitly isolated test database.
 - Vercel SPA routing is configured, but Render and Neon still require the documented manual
   dashboard setup. No CI workflow, centralized rate-limit store, or observability backend is
   committed.

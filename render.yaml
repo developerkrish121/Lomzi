@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: lomzi-api
+    runtime: node
+    buildCommand: npm ci && npm run build --workspace backend
+    startCommand: npm start --workspace backend
+    healthCheckPath: /api/v1/readiness
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: AUTH_COOKIE_NAME
+        sync: false
+      - key: TRUST_PROXY_HOPS
+        value: '1'
+      - key: JWT_EXPIRES_IN
+        value: 1d
+      - key: JWT_REMEMBER_EXPIRES_IN
+        value: 30d
+      - key: AUTH_RATE_LIMIT_WINDOW_MS
+        value: '900000'
+      - key: AUTH_RATE_LIMIT_MAX
+        value: '10'
+      - key: ADMIN_LOGIN_RATE_LIMIT_MAX
+        value: '5'
