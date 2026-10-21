@@ -1,0 +1,37 @@
+{
+  "name": "quickbasket",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Lomzi modern everyday-commerce platform",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently -n frontend,backend -c green,cyan \"npm run dev --workspace frontend\" \"npm run dev --workspace backend\"",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:backend": "npm run dev --workspace backend",
+    "build": "npm run build --workspace frontend && npm run build --workspace backend",
+    "test": "npm test --workspace backend && npm test --workspace frontend",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prisma:generate": "npm run prisma:generate --workspace backend",
+    "prisma:validate": "npm run prisma:validate --workspace backend"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.32.0",
+    "concurrently": "^9.2.0",
+    "eslint": "^9.32.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react": "^7.37.5",
+    "globals": "^16.3.0",
+    "prettier": "^3.6.2"
+  },
+  "engines": {
+    "node": "22.x",
+    "npm": ">=10.0.0"
+  }
+}

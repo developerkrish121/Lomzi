@@ -1,0 +1,17 @@
+{
+  "name": "Lomzi",
+  "short_name": "Lomzi",
+  "description": "Everyday finds, made simple.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F7F7F2",
+  "theme_color": "#173D32",
+  "icons": [
+    {
+      "src": "/lomzi-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
